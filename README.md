@@ -8,47 +8,49 @@ analysis and the lessons all run on the phone.
 
 ## Getting it onto the phone
 
-The phone is already set up for this over USB, the same way Anvil was.
+The app lives at **<https://efem-code.github.io/gambit/>**.
+
+Open that on the phone **in Chrome**, and tap the **Install** button that appears
+along the bottom. It then has its own icon and opens fullscreen with no browser
+bar, exactly like Anvil.
+
+Two details that are not optional, both learned the hard way:
+
+* **Chrome, not Brave.** Chrome installs a real web-app package; Brave only
+  makes a home-screen shortcut, which opens in a browser tab with a URL bar.
+  Anvil is installed by Chrome — `installerPackageName=com.android.chrome` — and
+  that is the whole reason it looks like an app.
+* **The https address, not localhost.** Android's app-install machinery keys on
+  the *hostname and ignores the port*, so every app served from `localhost`
+  fights over the same claim: Anvil, installed from plain `localhost`,
+  registered itself for `http://localhost` on **every** port and **every** path.
+  Serving Gambit from `gambit.localhost` avoided the clash but Chrome then
+  refused to launch it fullscreen. A real domain fixes both at once.
+
+To push a change:
+
+```bash
+./deploy.sh
+```
+
+That stamps a new build into `sw.js`, commits, and pushes. GitHub rebuilds in a
+minute or two; next time you open the app it notices the new build and reloads
+itself onto it — no cable, no reinstall. The build stamp matters: browsers
+compare the service worker byte for byte, and an unchanged file means the phone
+keeps running the version it already cached.
+
+<details>
+<summary>Running it locally while working on it</summary>
 
 ```bash
 ./phone.sh
 ```
 
-Then on the phone, in your browser's **⋮ menu → Add to Home screen** (Brave) or
-**Install app** (Chrome).
-
-It gets its own icon, opens without a browser bar, and works in aeroplane mode
-from then on. Unplug once it has loaded.
-
-Re-run `./phone.sh` to push an update; the service worker refreshes itself on the
-next launch, so you do not have to reinstall.
-
-<details>
-<summary>Why USB, and why the odd hostname</summary>
-
-`phone.sh` uses `adb reverse`, which makes the Mac's server reachable from the
-phone on loopback. Browsers treat loopback as a secure origin even over plain
-http, which is what lets the service worker register and the install option
-appear. A LAN address like `http://192.168.1.20:8778` is *not* a secure origin,
-so the browser would refuse the service worker — no offline mode and no
-home-screen install. That is the whole reason for the cable.
-
-The URL is `http://gambit.localhost:8778`, not `http://localhost:8778`. Chromium
-resolves any `*.localhost` name to loopback and still treats it as secure, and
-the distinction matters more than it looks: **an installed web app claims its
-entire host on Android, ignoring the port.** Anvil, installed from plain
-`localhost`, registered an intent filter for `http://localhost` on *every* port
-and *every* path — so opening any other localhost app on this phone pops an
-"Open with Anvil?" chooser instead of the app you asked for. Giving each app its
-own hostname keeps them out of each other's way. If you ever reinstall Anvil,
-put it on `anvil.localhost` for the same reason.
-
-If you want it without a cable, the folder is a plain static site: push it to any
-free HTTPS host (GitHub Pages, Netlify, Cloudflare Pages) and install from there.
+Serves the folder over USB at `http://gambit.localhost:8778` for testing on the
+phone without deploying. Fine for trying a change; not how you install it, for
+the reasons above. On the Mac, the `gambit` entry in `.claude/launch.json` does
+the same thing in a browser tab.
 </details>
-
-To work on it on the Mac: `python3 -m http.server 8778` in this folder, or the
-`gambit` entry in `.claude/launch.json`.
 
 ---
 
