@@ -1,0 +1,257 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Gambit</title>
+<meta name="description" content="Play chess against a bot at your level, review the game move by move, and learn the patterns. Runs entirely on your phone.">
+<meta name="theme-color" content="#2c2622" media="(prefers-color-scheme: dark)">
+<meta name="theme-color" content="#f3ede4" media="(prefers-color-scheme: light)">
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="icon" href="icon-192.png" type="image/png">
+<link rel="apple-touch-icon" href="apple-touch-icon.png">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-title" content="Gambit">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<link rel="stylesheet" href="styles.css">
+</head>
+<body>
+
+<div id="app">
+
+  <!-- ------------------------------------------------------------- PLAY -->
+  <section class="screen" id="screen-play" data-tab="play">
+    <header class="bar">
+      <h1>Gambit</h1>
+      <button class="icon-btn" id="btn-settings" aria-label="Settings">&#9881;</button>
+    </header>
+
+    <div class="pane" id="play-setup">
+      <div class="card">
+        <h2>New game</h2>
+        <label class="field">
+          <span>Opponent strength</span>
+          <select id="sel-level"></select>
+        </label>
+        <p class="hint" id="level-note"></p>
+
+        <span class="field-label">You play</span>
+        <div class="seg" id="seg-color" role="group" aria-label="Choose your colour">
+          <button data-color="w" class="on">White</button>
+          <button data-color="b">Black</button>
+          <button data-color="r">Random</button>
+        </div>
+
+        <button class="primary" id="btn-new-game">Start game</button>
+      </div>
+
+      <div class="card" id="card-resume" hidden>
+        <h2>Game in progress</h2>
+        <p class="hint" id="resume-note"></p>
+        <div class="row">
+          <button class="primary" id="btn-resume">Resume</button>
+          <button class="ghost" id="btn-abandon">Discard</button>
+        </div>
+      </div>
+
+      <div class="card">
+        <h2>Your rating</h2>
+        <p class="big" id="stat-rating">—</p>
+        <p class="hint" id="stat-record">No games yet. Your rating moves as you win and lose against the levels.</p>
+      </div>
+    </div>
+
+    <div class="pane game-pane" id="play-game" hidden>
+      <div class="game-top">
+        <div class="player" id="player-top"><span class="pname"></span><span class="pcap"></span></div>
+      </div>
+      <div class="board-wrap">
+        <div class="evalbar" id="evalbar" hidden><div class="evalbar-fill"></div><span class="evalbar-txt"></span></div>
+        <div class="board-holder"><div id="board"></div></div>
+      </div>
+      <div class="game-bottom">
+        <div class="player" id="player-bot"><span class="pname"></span><span class="pcap"></span></div>
+      </div>
+
+      <div class="game-side">
+        <div class="status" id="game-status">Your move</div>
+        <ol class="movelist" id="movelist"></ol>
+        <div class="controls">
+          <button class="ghost" id="btn-hint" title="Hint">Hint</button>
+          <button class="ghost" id="btn-takeback" title="Take back">Undo</button>
+          <button class="ghost" id="btn-flip" title="Flip board">Flip</button>
+          <button class="ghost" id="btn-resign" title="Resign">Resign</button>
+        </div>
+      </div>
+
+      <div class="result-card" id="result-card" hidden>
+        <h2 id="result-title"></h2>
+        <p id="result-detail"></p>
+        <div class="row">
+          <button class="primary" id="btn-review-now">Review this game</button>
+          <button class="ghost" id="btn-play-again">Play again</button>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ----------------------------------------------------------- REVIEW -->
+  <section class="screen" id="screen-review" data-tab="review" hidden>
+    <header class="bar">
+      <button class="icon-btn back" id="btn-review-back" aria-label="Back">&#8249;</button>
+      <h1>Game review</h1>
+      <button class="icon-btn" id="btn-review-share" aria-label="Copy PGN">PGN</button>
+    </header>
+
+    <div class="pane" id="review-picker">
+      <div class="card">
+        <h2>Saved games</h2>
+        <ul class="gamelist" id="gamelist"></ul>
+        <p class="hint" id="gamelist-empty" hidden>No finished games yet. Play one and it will appear here.</p>
+      </div>
+    </div>
+
+    <div class="pane" id="review-progress" hidden>
+      <div class="card">
+        <h2>Analysing</h2>
+        <div class="progress"><div class="progress-fill" id="review-bar"></div></div>
+        <p class="hint" id="review-progress-note">Looking at every position in the game.</p>
+        <button class="ghost" id="btn-review-cancel">Cancel</button>
+      </div>
+    </div>
+
+    <div class="pane game-pane" id="review-view" hidden>
+      <div class="game-top"><div class="player" id="rev-top"><span class="pname"></span></div></div>
+      <div class="board-wrap">
+        <div class="evalbar" id="rev-evalbar"><div class="evalbar-fill"></div><span class="evalbar-txt"></span></div>
+        <div class="board-holder"><div id="review-board"></div></div>
+      </div>
+      <div class="game-bottom"><div class="player" id="rev-bot"><span class="pname"></span></div></div>
+
+      <div class="game-side">
+        <!-- Stepping through the moves is the thing you do constantly, so it
+             sits directly under the board. The numbers you glance at go below. -->
+        <div class="controls nav">
+          <button class="ghost" id="btn-rev-first" aria-label="First move">&#8676;</button>
+          <button class="ghost" id="btn-rev-prev" aria-label="Previous move">&#8249;</button>
+          <button class="ghost" id="btn-rev-next" aria-label="Next move">&#8250;</button>
+          <button class="ghost" id="btn-rev-last" aria-label="Last move">&#8677;</button>
+          <button class="ghost" id="btn-rev-flip">Flip</button>
+        </div>
+        <div class="verdict" id="verdict"></div>
+        <div class="controls">
+          <button class="ghost wide" id="btn-rev-mistakes">Jump to my mistakes</button>
+          <button class="ghost wide" id="btn-rev-play">Play on from here</button>
+        </div>
+        <div class="accuracy-row" id="accuracy-row"></div>
+        <svg class="evalgraph" id="evalgraph" viewBox="0 0 300 70" preserveAspectRatio="none" aria-label="Evaluation across the game"></svg>
+        <ol class="movelist reviewed" id="review-movelist"></ol>
+      </div>
+    </div>
+  </section>
+
+  <!-- ------------------------------------------------------------ LEARN -->
+  <section class="screen" id="screen-learn" data-tab="learn" hidden>
+    <header class="bar">
+      <h1>Learn</h1>
+      <span class="bar-note" id="learn-progress"></span>
+    </header>
+    <div class="pane" id="learn-index"></div>
+
+    <div class="pane game-pane" id="learn-lesson" hidden>
+      <div class="game-top">
+        <div class="lesson-head">
+          <button class="icon-btn back" id="btn-lesson-back" aria-label="Back">&#8249;</button>
+          <div>
+            <div class="lesson-title" id="lesson-title"></div>
+            <div class="stepdots" id="stepdots"></div>
+          </div>
+        </div>
+      </div>
+      <div class="board-wrap">
+        <div class="board-holder"><div id="lesson-board"></div></div>
+      </div>
+      <div class="game-side">
+        <p class="lesson-text" id="lesson-text"></p>
+        <p class="lesson-feedback" id="lesson-feedback"></p>
+        <div class="controls">
+          <button class="ghost" id="btn-lesson-hint">Hint</button>
+          <button class="ghost" id="btn-lesson-show">Show me</button>
+          <button class="primary" id="btn-lesson-next" hidden>Continue</button>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- --------------------------------------------------------- SETTINGS -->
+  <div class="sheet" id="sheet-settings" hidden>
+    <div class="sheet-inner">
+      <h2>Settings</h2>
+      <label class="toggle"><input type="checkbox" id="opt-eval"> <span>Show evaluation bar while playing</span></label>
+      <p class="hint indent">Off by default — seeing the engine's opinion mid-game makes it hard to practise judging for yourself.</p>
+      <label class="toggle"><input type="checkbox" id="opt-coords"> <span>Board coordinates</span></label>
+      <label class="toggle"><input type="checkbox" id="opt-sound"> <span>Move sounds</span></label>
+      <label class="toggle"><input type="checkbox" id="opt-confirm"> <span>Confirm each move before it is played</span></label>
+      <label class="field">
+        <span>Review depth</span>
+        <select id="opt-review-depth">
+          <option value="300">Fast — about 20 seconds</option>
+          <option value="700">Normal — about a minute</option>
+          <option value="1600">Deep — a few minutes</option>
+        </select>
+      </label>
+      <label class="field">
+        <span>Piece style</span>
+        <select id="opt-pieces">
+          <option value="staunton">Staunton — the standard tournament set</option>
+          <option value="carved">Carved stone — medieval, heavier</option>
+        </select>
+      </label>
+      <label class="field">
+        <span>Board colours</span>
+        <select id="opt-theme">
+          <option value="wood">Wood</option>
+          <option value="slate">Slate</option>
+          <option value="green">Tournament green</option>
+        </select>
+      </label>
+      <div class="row">
+        <button class="ghost" id="btn-export">Export all data</button>
+        <button class="ghost danger" id="btn-reset">Reset everything</button>
+      </div>
+      <p class="hint" id="settings-version"></p>
+      <button class="primary" id="btn-settings-close">Done</button>
+    </div>
+  </div>
+
+  <div class="banner" id="banner" hidden>
+    <span class="banner-text" id="banner-text"></span>
+    <button class="banner-act" id="banner-act"></button>
+    <button class="banner-x" id="banner-x" aria-label="Dismiss">&times;</button>
+  </div>
+
+  <nav class="tabs" id="tabs">
+    <button data-goto="play" class="on"><span class="tab-ico">&#9814;</span>Play</button>
+    <button data-goto="review"><span class="tab-ico">&#9202;</span>Review</button>
+    <button data-goto="learn"><span class="tab-ico">&#9998;</span>Learn</button>
+  </nav>
+
+</div>
+
+<script src="chess.js"></script>
+<script src="engine.js"></script>
+<script src="book.js"></script>
+<script src="review.js"></script>
+<script src="pieces.js"></script>
+<script src="board.js"></script>
+<script src="tutorials.js"></script>
+<script src="store.js"></script>
+<script src="app.js"></script>
+<script>
+if ('serviceWorker' in navigator) {
+  addEventListener('load', function () { navigator.serviceWorker.register('sw.js').catch(function () {}); });
+}
+</script>
+</body>
+</html>
