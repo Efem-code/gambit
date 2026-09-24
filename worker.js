@@ -20,6 +20,36 @@ function pvSan(fen, moves) {
   return out;
 }
 
+var PIECE_NAMES = ['', 'pawn', 'knight', 'bishop', 'rook', 'queen', 'king'];
+var VALUE = [0, 100, 320, 330, 500, 900, 20000];
+
+/* What the opponent gets to do about a move — the part a warning has to name.
+   "This is bad" teaches nothing; "this drops the rook on d4 to Bxd4" does. */
+function punishment(p, move) {
+  var legal = Chess.legalMoves(p), ok = false;
+  for (var i = 0; i < legal.length; i++) if (legal[i] === move) { ok = true; break; }
+  if (!ok) return null;
+
+  Chess.makeMove(p, move);
+  var reply = search.think(p, { time: 250, depth: 8 });
+  var out = null;
+  if (reply.move) {
+    var san = Chess.moveToSan(p, reply.move);
+    var victim = (reply.move & Chess.F_CAP) ? p.board[Chess.mTo(reply.move)] : 0;
+    if (victim && Chess.typeOf(victim) !== Chess.PAWN) {
+      var to = Chess.mTo(reply.move);
+      var attacker = p.board[Chess.mFrom(reply.move)];
+      var defenders = Review.countAttackers(p, to, p.side ^ 8);
+      if (defenders === 0 || VALUE[Chess.typeOf(victim)] > VALUE[Chess.typeOf(attacker)]) {
+        out = { san: san, piece: PIECE_NAMES[Chess.typeOf(victim)], square: Chess.sqName(to) };
+      }
+    }
+    if (!out) out = { san: san, piece: '', square: '' };
+  }
+  Chess.unmakeMove(p);
+  return out;
+}
+
 self.onmessage = function (e) {
   var msg = e.data, p;
 
@@ -65,6 +95,24 @@ self.onmessage = function (e) {
       top: (res.rootMoves || []).slice(0, msg.top || 3).map(function (rm) {
         return { move: rm.move, san: Chess.moveToSan(p, rm.move), score: rm.score };
       })
+    });
+    return;
+  }
+
+  /* Score one specific move against the best one. Coach mode asks this before
+     letting a move be played; the puzzle trainer asks it when an answer is not
+     the stored solution, so a move that is just as good is still accepted. */
+  if (msg.type === 'probe') {
+    p = Chess.fromFen(msg.fen);
+    var pr = search.think(p, { time: msg.time || 500, depth: msg.depth || 12, exactRoot: true });
+    var playedScore = null, rm = pr.rootMoves || [];
+    for (var k = 0; k < rm.length; k++) if (rm[k].move === msg.move) { playedScore = rm[k].score; break; }
+    self.postMessage({
+      type: 'probe', id: msg.id,
+      best: pr.move, bestSan: pr.move ? Chess.moveToSan(p, pr.move) : '',
+      bestScore: pr.score, playedScore: playedScore,
+      bestLineSan: pvSan(msg.fen, pr.pv).slice(0, 4),
+      punish: punishment(p, msg.move)
     });
     return;
   }

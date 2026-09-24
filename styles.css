@@ -91,11 +91,12 @@ button { font: inherit; color: inherit; }
 
 .tabs {
   position: fixed; left: 0; right: 0; bottom: 0; z-index: 30;
-  display: grid; grid-template-columns: repeat(3, 1fr);
+  display: grid; grid-template-columns: repeat(4, 1fr);
   background: color-mix(in srgb, var(--surface) 94%, transparent);
   backdrop-filter: blur(12px);
   border-top: 1px solid var(--line);
-  padding-bottom: env(safe-area-inset-bottom, 0);
+  padding-bottom: 20px;
+  padding-bottom: max(20px, env(safe-area-inset-bottom, 0px));
 }
 .tabs button {
   background: none; border: 0; padding: 8px 4px 10px;
@@ -103,7 +104,14 @@ button { font: inherit; color: inherit; }
   font-size: 11px; color: var(--ink-soft); cursor: pointer;
 }
 .tabs button.on { color: var(--accent); font-weight: 600; }
+.tabs button { position: relative; }
 .tab-ico { font-size: 19px; line-height: 1; }
+.tab-badge {
+  position: absolute; top: 2px; left: 50%; margin-left: 6px;
+  min-width: 16px; padding: 0 4px; height: 16px; line-height: 16px;
+  border-radius: 99px; background: var(--accent); color: var(--accent-ink);
+  font-size: 10px; font-weight: 700; text-align: center;
+}
 
 .pane { padding: var(--pad); display: flex; flex-direction: column; gap: 12px; }
 
@@ -227,8 +235,12 @@ select, input[type="text"] {
 .bd-dot { fill: rgba(20,16,12,.34); }
 .bd-capture { fill: none; stroke: rgba(20,16,12,.32); stroke-width: .09; }
 .bd-arrow { stroke: var(--good); stroke-width: .14; opacity: .82; stroke-linecap: round; }
-.bd-arrowhead { fill: var(--good); opacity: .82; }
-.bd-arrow.alt, .bd-arrowhead.alt { stroke: var(--bad); fill: var(--bad); }
+/* The head is filled, never stroked. The board's viewBox is 8 units across, so
+   an unset stroke-width here means a default of 1 — an outline a whole square
+   wide, which is what the red arrow used to draw. */
+.bd-arrowhead { fill: var(--good); stroke: none; opacity: .82; }
+.bd-arrow.alt { stroke: var(--bad); }
+.bd-arrowhead.alt { fill: var(--bad); }
 .board.frozen { cursor: default; }
 
 .bd-promo {
@@ -286,6 +298,9 @@ select, input[type="text"] {
 
 .controls { display: flex; gap: 6px; flex-wrap: wrap; }
 .controls .ghost { flex: 1; padding: 10px 6px; font-size: 13px; }
+/* .ghost.wide is declared earlier and loses to the line above on source order,
+   so a full-width button inside .controls has to say so here. */
+.controls .ghost.wide { flex: 1 1 100%; }
 
 .result-card {
   margin: 0 var(--pad); background: var(--surface); border: 1px solid var(--line);
@@ -401,6 +416,61 @@ select, input[type="text"] {
 .lesson-feedback.ok { color: var(--good); }
 .lesson-feedback.no { color: var(--bad); }
 
+
+.field.disabled { opacity: .45; }
+.field.disabled select { pointer-events: none; }
+
+/* ----------------------------------------------------------------- train */
+
+.acc-row3 { display: flex; gap: 8px; }
+.acc-row3 .acc-box { text-align: center; }
+
+#weak-report h3.sub {
+  margin: 14px 0 2px; font-size: 12px; text-transform: uppercase;
+  letter-spacing: .6px; color: var(--ink-soft); font-weight: 700;
+}
+.weak-row { display: flex; flex-direction: column; gap: 3px; margin: 8px 0; }
+.weak-head { display: flex; justify-content: space-between; align-items: baseline; gap: 10px; }
+.weak-lbl { font-size: 14px; font-weight: 600; }
+.weak-val { font-size: 12.5px; color: var(--ink-soft); font-variant-numeric: tabular-nums; white-space: nowrap; }
+.weak-track { height: 7px; background: var(--surface-2); border-radius: 99px; overflow: hidden; }
+.weak-fill { height: 100%; background: var(--accent); border-radius: 99px; }
+.weak-sub { font-size: 12px; color: var(--ink-soft); line-height: 1.35; }
+
+#btn-puz-next { margin-top: 2px; }
+
+/* ----------------------------------------------------------- coach mode */
+
+/* Sits where the result card sits, because it does the same job: it stops the
+   game and asks you something. */
+.coach-card {
+  margin: 0 var(--pad); background: var(--surface);
+  border: 1px solid var(--warn); border-left-width: 4px;
+  border-radius: var(--radius); padding: 14px 16px;
+  display: flex; flex-direction: column; gap: 9px;
+}
+.coach-head { display: flex; align-items: baseline; gap: 9px; font-weight: 700; font-size: 16px; }
+.coach-tag {
+  font-size: 11px; text-transform: uppercase; letter-spacing: .6px;
+  background: var(--warn); color: #fff; border-radius: 99px; padding: 2px 8px;
+}
+.coach-card p { margin: 0; font-size: 14px; color: var(--ink-soft); line-height: 1.45; }
+
+/* ------------------------------------------------------- analysis board */
+
+.analysis {
+  background: var(--surface); border: 1px solid var(--accent);
+  border-radius: 10px; padding: 12px; display: flex; flex-direction: column; gap: 7px;
+}
+.analysis-head { display: flex; justify-content: space-between; align-items: baseline; }
+.analysis-head strong { font-size: 14px; }
+.analysis-eval { font-size: 17px; font-weight: 700; font-variant-numeric: tabular-nums; }
+.analysis-line {
+  margin: 0; font-size: 13.5px; line-height: 1.5;
+  font-variant-numeric: tabular-nums; word-break: break-word;
+}
+.analysis .hint { margin: 0; }
+
 /* ---------------------------------------------------------------- sheet */
 
 .sheet {
@@ -429,7 +499,7 @@ select, input[type="text"] {
   .board-wrap { grid-area: board; padding: 0; }
   .game-bottom { grid-area: bottom; padding: 0; }
   .game-side { grid-area: side; padding: 0; position: sticky; top: 64px; }
-  .result-card { grid-area: result; margin: 0; }
+  .result-card, .coach-card { grid-area: result; margin: 0; }
   .movelist { max-height: 300px; }
   .pane { max-width: 720px; margin: 0 auto; width: 100%; }
   .lesson-head { padding: 0; }

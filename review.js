@@ -104,6 +104,92 @@ function forkTargets(p, from) {
   return hits;
 }
 
+/* ------------------------------------------------------------- Motifs */
+
+/* A motif is the *shape* of the mistake, not its size. Centipawns tell you a
+   move was bad; the motif is what you'd have to learn to stop making it again,
+   so it is what the weakness report counts and what the puzzle trainer drills.
+   Only tags that can be established from the position are used — nothing here
+   guesses at "poor planning" or other labels that cannot be checked. */
+var MOTIFS = {
+  'missed-mate':  { label: 'Missed mate',      blurb: 'A forced mate was on the board and went unplayed.' },
+  'allowed-mate': { label: 'Allowed mate',     blurb: 'The move walked into a forced mate.' },
+  'hanging':      { label: 'Hung a piece',     blurb: 'A piece was left where it could simply be taken.' },
+  'back-rank':    { label: 'Back rank',        blurb: 'The king was mated on its home rank behind its own pawns.' },
+  'missed-fork':  { label: 'Missed a fork',    blurb: 'One move attacked two pieces at once, and it was not played.' },
+  'missed-win':   { label: 'Missed material',  blurb: 'A capture that simply won material was available.' },
+  'positional':   { label: 'Positional',       blurb: 'No single tactic — the move quietly made the position worse.' }
+};
+
+var PHASES = { opening: 'Opening', middlegame: 'Middlegame', endgame: 'Endgame' };
+
+/* Non-pawn, non-king material left on the board, in centipawns. */
+function heavyMaterial(p) {
+  var total = 0, b = p.board;
+  for (var r = 0; r < 8; r++) {
+    for (var f = 0; f < 8; f++) {
+      var piece = b[r * 16 + f];
+      if (!piece) continue;
+      var t = C.typeOf(piece);
+      if (t !== C.PAWN && t !== C.KING) total += VALUE[t];
+    }
+  }
+  return total;
+}
+
+function phaseOf(p, ply, inBook) {
+  if (heavyMaterial(p) <= 1300) return 'endgame';
+  if (inBook || ply < 16) return 'opening';
+  return 'middlegame';
+}
+
+/* A back-rank mate has a signature worth recognising on sight: the mated king
+   is still on the rank it started on, the mating piece is a rook or queen that
+   has landed on that same rank, and the king's escape squares in front of it
+   are blocked by its own pawns. Checking all three is what stops every mate on
+   the first rank from being filed under "back rank". */
+function isBackRank(p, mateMove) {
+  if (!mateMove) return false;
+  var mover = p.board[C.mFrom(mateMove)];
+  if (!mover) return false;
+  var t = C.typeOf(mover);
+  if (t !== C.ROOK && t !== C.QUEEN) return false;
+
+  var victimSide = C.colorOf(mover) ^ 8;
+  var homeRank = (victimSide === C.WHITE) ? 0 : 7;
+  if (Math.floor(C.mTo(mateMove) / 16) !== homeRank) return false;
+
+  var ks = -1, b = p.board;
+  for (var sq = 0; sq < 128; sq++) {
+    if (!C.onBoard(sq)) continue;
+    if (b[sq] === (C.KING | victimSide)) { ks = sq; break; }
+  }
+  if (ks < 0 || Math.floor(ks / 16) !== homeRank) return false;
+
+  /* Every square directly in front of the king must be occupied by its own
+     pawn — that is the "behind its own pawns" part of the pattern. */
+  var fwd = (victimSide === C.WHITE) ? 16 : -16;
+  var blocked = 0, seen = 0;
+  for (var d = -1; d <= 1; d++) {
+    var s = ks + fwd + d;
+    if (!C.onBoard(s)) continue;
+    seen++;
+    if (b[s] === (C.PAWN | victimSide)) blocked++;
+  }
+  return seen > 0 && blocked === seen;
+}
+
+/* The one label that best describes what went wrong. Order matters: a move that
+   both hangs a rook and allows mate is a mate problem, not a hanging-piece one. */
+function motifOf(ctx, bestMate, playedMate, backRank) {
+  if (bestMate !== null && bestMate > 0 && (playedMate === null || playedMate > bestMate)) return 'missed-mate';
+  if (playedMate !== null && playedMate < 0) return backRank ? 'back-rank' : 'allowed-mate';
+  if (ctx.hangs) return backRank ? 'back-rank' : 'hanging';
+  if (ctx.bestCaptureWins) return 'missed-win';
+  if (ctx.bestForks && ctx.bestForks.length >= 2) return 'missed-fork';
+  return 'positional';
+}
+
 /* ------------------------------------------------------------ Classifying */
 
 var CLASSES = {
@@ -183,6 +269,13 @@ function explain(ctx) {
 
   if (bestMate !== null && bestMate > 0 && (playedMate === null || playedMate > bestMate)) {
     bits.push('Missed a forced mate: ' + bestSan + ' mates in ' + bestMate + '.');
+  } else if (playedMate !== null && playedMate < 0) {
+    if (ctx.backRank) {
+      bits.push('This allows mate in ' + (-playedMate) + ' on the back rank — the king is ' +
+                'shut in by its own pawns. ' + bestSan + ' was necessary.');
+    } else {
+      bits.push('This allows mate in ' + (-playedMate) + '. ' + bestSan + ' was necessary.');
+    }
   } else if (ctx.hangs) {
     bits.push('This leaves the ' + ctx.hangs.piece + ' on ' + ctx.hangs.square +
               ' undefended — ' + ctx.hangs.takenBy + ' wins it.');
@@ -191,8 +284,6 @@ function explain(ctx) {
     bits.push(bestSan + ' would have won the ' + ctx.bestCaptureWins + '.');
   } else if (ctx.bestForks && ctx.bestForks.length >= 2) {
     bits.push(bestSan + ' forks the ' + ctx.bestForks.join(' and the ') + '.');
-  } else if (playedMate !== null && playedMate < 0) {
-    bits.push('This allows mate in ' + (-playedMate) + '. ' + bestSan + ' was necessary.');
   } else {
     bits.push(bestSan + ' was stronger.');
   }
@@ -275,9 +366,12 @@ function analyze(startFen, moves, opts) {
       playedIsBest: move === before.best,
       secondBestGap: before.secondBestGap,
       legalCount: before.legalCount,
-      inBook: before.inBook,
+      /* A move is a book move only if it *stays* in the book. Testing the
+         position before the move labelled every first deviation as "Book",
+         which hid the exact mistakes worth reviewing. */
+      inBook: before.inBook && after.inBook,
       bestSan: before.bestSan,
-      sacrifice: false, hangs: null, captureWins: '', bestCaptureWins: '',
+      sacrifice: false, hangs: null, backRank: false, captureWins: '', bestCaptureWins: '',
       forks: null, bestForks: null
     };
 
@@ -322,8 +416,31 @@ function analyze(startFen, moves, opts) {
       C.unmakeMove(p);
     }
 
+    /* Was the punishing reply a mate, and does it wear the back-rank pattern? */
+    var backRank = false;
+    if (after.bestScore > E.MATE - 1000) {
+      C.makeMove(p, move);
+      backRank = isBackRank(p, after.best);
+      C.unmakeMove(p);
+    }
+    ctx.backRank = backRank;
+
     ctx.cls = classify(ctx);
     var sanText = C.moveToSan(p, move);
+
+    var bMate = mateIn(before.bestScore), pMate = mateIn(playedScore);
+    var motif = (ctx.cls === 'inaccuracy' || ctx.cls === 'mistake' || ctx.cls === 'blunder')
+      ? motifOf(ctx, bMate, pMate, backRank) : null;
+    var phase = phaseOf(p, i, ctx.inBook);
+
+    /* A position makes a fair puzzle when there is a move clearly better than
+       the one played. It does not have to be the *only* good move — the
+       trainer asks the engine about whatever you answer, so an equally strong
+       alternative is accepted rather than marked wrong. What the gap rules out
+       is the position where everything is much of a muchness and "find the
+       best move" has no defensible answer at all. */
+    var puzzle = (ctx.cls === 'mistake' || ctx.cls === 'blunder') &&
+                 !!before.best && before.secondBestGap >= 30 && before.legalCount > 1;
 
     /* Accuracy is scored against how much winning chance the move gave away. */
     var acc = moveAccuracy(wBefore, wAfter);
@@ -351,7 +468,12 @@ function analyze(startFen, moves, opts) {
       bestSan: before.bestSan,
       bestLine: before.pv,
       openingName: before.bookName,
-      note: explain(ctx)
+      note: explain(ctx),
+      motif: motif,
+      motifLabel: motif ? MOTIFS[motif].label : '',
+      phase: phase,
+      piece: PIECE_NAMES[C.typeOf(p.board[C.mFrom(move)])],
+      puzzle: puzzle
     });
 
     C.makeMove(p, move);
@@ -369,8 +491,8 @@ function analyze(startFen, moves, opts) {
 }
 
 return {
-  analyze: analyze, CLASSES: CLASSES, winPct: winPct, mateIn: mateIn,
-  countAttackers: countAttackers
+  analyze: analyze, CLASSES: CLASSES, MOTIFS: MOTIFS, PHASES: PHASES,
+  winPct: winPct, mateIn: mateIn, countAttackers: countAttackers
 };
 })();
 

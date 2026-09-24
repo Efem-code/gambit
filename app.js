@@ -1,7 +1,8 @@
 /* Gambit — application.
  *
- * Three screens over one board widget: play a game, review a finished game,
- * work through a lesson. The engine always runs in a worker when one is
+ * Four screens over one board widget: play a game, review a finished game,
+ * drill the positions you got wrong, work through a lesson. The engine always
+ * runs in a worker when one is
  * available, and falls back to the main thread when it is not, so the app still
  * works if a service worker is unavailable or the page is opened from a file.
  */
@@ -60,8 +61,30 @@ var Eng = (function () {
           return resolve({ type: 'eval', move: res.move, san: res.move ? Chess.moveToSan(p, res.move) : '',
                            score: res.score, depth: res.depth, pv: res.pv, pvSan: [] });
         }
+        if (msg.type === 'probe') {
+          var pr = localSearch.think(p, { time: msg.time || 500, depth: msg.depth || 12, exactRoot: true });
+          var ps = null, rm = pr.rootMoves || [];
+          for (var k = 0; k < rm.length; k++) if (rm[k].move === msg.move) { ps = rm[k].score; break; }
+          return resolve({
+            type: 'probe', best: pr.move, bestSan: pr.move ? Chess.moveToSan(p, pr.move) : '',
+            bestScore: pr.score, playedScore: ps, bestLineSan: [], punish: null
+          });
+        }
         if (msg.type === 'review') {
           var out = Review.analyze(msg.fen, msg.moves, { time: msg.time || 700, onProgress: msg._prog });
+          /* The worker adds these; without one, add them here so the review
+             screen does not quietly lose its "best line" text. */
+          out.moves.forEach(function (mv) {
+            var q = Chess.fromFen(mv.fenBefore), sans = [], n = 0;
+            (mv.bestLine || []).forEach(function (x) {
+              var lg = Chess.legalMoves(q), good = false;
+              for (var j = 0; j < lg.length; j++) if (lg[j] === x) { good = true; break; }
+              if (!good) return;
+              sans.push(Chess.moveToSan(q, x)); Chess.makeMove(q, x); n++;
+            });
+            while (n--) Chess.unmakeMove(q);
+            mv.bestLineSan = sans;
+          });
           return resolve({ type: 'review', result: out });
         }
         resolve({});
@@ -173,8 +196,10 @@ function newGame(opts) {
     playerColor: color === 'w' ? Chess.WHITE : Chess.BLACK,
     elo: opts.elo || s.elo,
     startedAt: new Date().toISOString(),
-    result: null, over: false, lastScore: 0
+    result: null, over: false, lastScore: 0, coached: false
   };
+  coachApproved = 0; coachPending = 0;
+  $('coach-card').hidden = true;
   showGame();
 }
 
@@ -234,6 +259,7 @@ function renderMoveList() {
 }
 
 function updateStatus() {
+  if (coachPending) { $('game-status').textContent = 'The coach has something to say.'; return; }
   var st = $('game-status');
   st.classList.remove('thinking');
   if (G.over) { st.textContent = G.resultText || 'Game over'; return; }
@@ -258,10 +284,94 @@ function onPlayerMove(m) {
   }
   pendingConfirm = 0;
   board.setArrows([]);
+  if (Store.settings().coach && coachApproved !== m) { askCoach(m); return; }
+  coachApproved = 0;
   applyMove(m);
 }
 
+/* -------------------------------------------------------------- coach mode */
+
+/* The engine looks at your move before it is played and, if it costs enough,
+   says what it misses and lets you take it back. Deliberately opt-in and
+   deliberately unrated: a game where something else is watching for hanging
+   pieces is not a measurement of you playing chess. */
+
+var coachApproved = 0;
+
+function coachTag(loss) {
+  if (loss >= 250) return 'Blunder';
+  if (loss >= 120) return 'Mistake';
+  return 'Slip';
+}
+
+function askCoach(m) {
+  var san = Chess.moveToSan(G.pos, m);
+  G.coached = true;
+  thinking = true;
+  board.setFrozen(true);
+  $('game-status').textContent = 'Coach is checking ' + san + '…';
+
+  Eng.request({ type: 'probe', fen: Chess.toFen(G.pos), move: m, time: 500, depth: 12 })
+    .then(function (res) {
+      thinking = false;
+      if (!G || G.over) return;
+      board.setFrozen(false);
+
+      var played = res.playedScore;
+      var loss = (played === null || played === undefined) ? 0 : (res.bestScore - played);
+      var limit = Store.settings().coachLevel || 250;
+
+      if (loss < limit || !res.best || res.best === m) {
+        coachApproved = m;
+        updateStatus();
+        applyMove(m);
+        return;
+      }
+
+      var parts = [];
+      if (res.punish && res.punish.piece) {
+        parts.push('It leaves the ' + res.punish.piece + ' on ' + res.punish.square +
+                   ' — ' + res.punish.san + ' takes it.');
+      } else if (res.punish && res.punish.san) {
+        parts.push(res.punish.san + ' is the reply that hurts.');
+      }
+      parts.push(res.bestSan + ' was stronger' +
+        (res.bestLineSan && res.bestLineSan.length > 1
+          ? ' (' + res.bestLineSan.join(' ') + ')' : '') + '.');
+      parts.push('About ' + (loss / 100).toFixed(1) + ' pawns.');
+
+      coachPending = m;
+      $('coach-tag').textContent = coachTag(loss);
+      $('coach-move').textContent = san;
+      $('coach-note').textContent = parts.join(' ');
+      $('coach-card').hidden = false;
+      board.setArrows([
+        { from: Chess.mFrom(m), to: Chess.mTo(m), cls: 'alt' },
+        { from: Chess.mFrom(res.best), to: Chess.mTo(res.best) }
+      ]);
+      board.setFrozen(true);
+      haptic(18);
+      updateStatus();
+    });
+}
+
+var coachPending = 0;
+
+function dismissCoach(play) {
+  $('coach-card').hidden = true;
+  board.setArrows([]);
+  board.setFrozen(false);
+  var m = coachPending;
+  coachPending = 0;
+  if (play && m) { coachApproved = m; applyMove(m); }
+  else { board.render(); updateStatus(); }
+}
+
 function applyMove(m, done) {
+  /* Clear the coach's approval as the move is spent. Move integers repeat —
+     the same rook shuffle twice is the same number — and a stale approval
+     would wave the second one through unchecked. */
+  coachApproved = 0;
   var san = Chess.moveToSan(G.pos, m);
   G.moves.push(m);
   G.sans.push(san);
@@ -330,18 +440,27 @@ function finishGame(result, text, score) {
   G.result = result;
   G.resultText = text;
   board.setFrozen(true);
+  $('coach-card').hidden = true;
   if (score === 1) Sound.win(); else if (score === 0) Sound.lose();
-  var newRating = Store.recordResult(score, G.elo);
-  var rec = Store.record();
+
+  var detail;
+  if (G.coached) {
+    detail = 'Played with the coach on, so your rating is unchanged — it would ' +
+             'not be your rating. Review it anyway; the mistakes still count.';
+  } else {
+    var newRating = Store.recordResult(score, G.elo);
+    var rec = Store.record();
+    detail = 'Your rating is now ' + newRating +
+      ' (' + rec.w + 'W ' + rec.d + 'D ' + rec.l + 'L). ' +
+      'Reviewing the game is where the improvement actually happens.';
+  }
   var game = serializeGame();
   game.result = result;
   game.resultText = text;
   game.finishedAt = new Date().toISOString();
   Store.addGame(game);
   $('result-title').textContent = text;
-  $('result-detail').textContent = 'Your rating is now ' + newRating +
-    ' (' + rec.w + 'W ' + rec.d + 'D ' + rec.l + 'L). ' +
-    'Reviewing the game is where the improvement actually happens.';
+  $('result-detail').textContent = detail;
   $('result-card').hidden = false;
   updateStatus();
   renderGameList();
@@ -353,7 +472,7 @@ function serializeGame() {
     uci: G.moves.map(Chess.moveToUci),
     sans: G.sans.slice(),
     playerColor: G.playerColor === Chess.WHITE ? 'w' : 'b',
-    elo: G.elo, startedAt: G.startedAt,
+    elo: G.elo, startedAt: G.startedAt, coached: !!G.coached,
     result: G.result, resultText: G.resultText
   };
 }
@@ -371,7 +490,7 @@ function restoreGame(saved) {
   return {
     id: saved.id, startFen: saved.startFen, pos: pos, moves: moves, sans: sans,
     playerColor: saved.playerColor === 'w' ? Chess.WHITE : Chess.BLACK,
-    elo: saved.elo, startedAt: saved.startedAt,
+    elo: saved.elo, startedAt: saved.startedAt, coached: !!saved.coached,
     result: saved.result || null, over: !!saved.result, lastScore: 0
   };
 }
@@ -394,6 +513,8 @@ function toPgn(saved) {
 /* -------------------------------------------------------- play controls */
 
 function bindPlay() {
+  on($('btn-coach-back'), 'click', function () { dismissCoach(false); });
+  on($('btn-coach-go'), 'click', function () { dismissCoach(true); });
   on($('sel-level'), 'change', function () {
     Store.setSetting('elo', +this.value);
     updateLevelNote();
@@ -515,6 +636,7 @@ function renderGameList() {
     btn.appendChild(el('div', 'g-sub',
       (g.sans ? Math.ceil(g.sans.length / 2) : 0) + ' moves · ' +
       new Date(g.finishedAt || g.startedAt).toLocaleDateString() +
+      (g.coached ? ' · coached' : '') +
       (g.review ? '' : ' · not analysed')));
     btn.onclick = function () { openReview(g.id); };
     li.appendChild(btn);
@@ -533,7 +655,12 @@ function renderGameList() {
 function openReview(id) {
   var g = Store.gameById(id);
   if (!g) { showReviewPane('picker'); return; }
-  if (g.review && g.review.moves) { startReviewView(g, g.review); return; }
+  if (g.review && g.review.moves) {
+    Store.harvestReview(g, g.review);
+    updateTrainBadge();
+    startReviewView(g, g.review);
+    return;
+  }
   runAnalysis(g);
 }
 
@@ -561,8 +688,19 @@ function runAnalysis(g) {
   }).then(function (res) {
     if (reviewCancelled || !res.result) return;
     Store.attachReview(g.id, res.result);
+    /* Harvest before the trimming ever gets a chance to reach this game: the
+       mistakes are the part worth keeping past the five-review window. */
+    var got = Store.harvestReview(g, res.result);
+    updateTrainBadge();
     renderGameList();
     startReviewView(g, res.result);
+    if (got && got.added) {
+      showBanner(got.added + ' position' + (got.added === 1 ? '' : 's') +
+        ' added to your training deck.', 'Train', function () {
+        hideBanner();
+        goTab('train');
+      });
+    }
   });
 }
 
@@ -702,6 +840,7 @@ function renderEvalGraph() {
 
 function gotoPly(index) {
   if (!RV) return;
+  if (AN && index !== RV.index) stopExplore();
   index = Math.max(0, Math.min(RV.positions.length - 1, index));
   RV.index = index;
   RV.showingBest = false;
@@ -764,6 +903,130 @@ function renderVerdict(info) {
   v.appendChild(btn);
 }
 
+
+/* ------------------------------------------------------------- analysis */
+
+/* The same board in a different mode: move the pieces yourself from any
+   position in the game and the engine says what it makes of the result. The
+   game itself is untouched — leaving analysis puts everything back. */
+
+var AN = null;   /* { base, moves[], sans[] } */
+
+function analysisOn() { return !!AN; }
+
+function startExplore() {
+  if (!RV) return;
+  AN = { base: RV.positions[RV.index], moves: [], sans: [] };
+  $('analysis').hidden = false;
+  $('btn-rev-explore').textContent = 'Stop exploring';
+  revBoard.interactive = true;
+  revBoard.onMove = onAnalysisMove;
+  revBoard.setFrozen(false);
+  revBoard.setArrows([]);
+  revBoard.setPosition(AN.base, null);
+  renderAnalysis();
+  evaluateAnalysis();
+  /* The panel sits under the board, which on a phone can still be just below
+     the fold. Bring it into view rather than leaving the button looking dead. */
+  try { $('analysis').scrollIntoView({ block: 'nearest', behavior: 'smooth' }); } catch (e) {}
+}
+
+function stopExplore() {
+  AN = null;
+  $('analysis').hidden = true;
+  $('btn-rev-explore').textContent = 'Explore this position';
+  revBoard.interactive = false;
+  revBoard.onMove = function () {};
+  gotoPly(RV.index);
+}
+
+function analysisFen() {
+  var p = Chess.fromFen(AN.base);
+  AN.moves.forEach(function (m) { Chess.makeMove(p, m); });
+  return Chess.toFen(p);
+}
+
+function renderAnalysis() {
+  var line = $('analysis-line');
+  if (!AN.sans.length) {
+    line.textContent = 'Move a piece to try an idea. Nothing here changes the game.';
+    return;
+  }
+  /* Number the variation from wherever in the game it started. */
+  var startPly = RV.index, out = [], i;
+  for (i = 0; i < AN.sans.length; i++) {
+    var ply = startPly + i;
+    var num = Math.floor(ply / 2) + 1;
+    if (ply % 2 === 0) out.push(num + '. ' + AN.sans[i]);
+    else out.push(i === 0 ? num + '… ' + AN.sans[i] : AN.sans[i]);
+  }
+  line.textContent = out.join(' ');
+}
+
+function evaluateAnalysis() {
+  if (!AN) return;
+  var fen = analysisFen();
+  var pos = Chess.fromFen(fen);
+  var over = Chess.outcome(pos);
+  if (over) {
+    $('analysis-eval').textContent = over === 'checkmate'
+      ? (pos.side === Chess.WHITE ? '0–1' : '1–0') : '½–½';
+    $('analysis-best').textContent = over === 'checkmate' ? 'Checkmate.' : 'The game ends here: ' + over + '.';
+    return;
+  }
+  $('analysis-eval').textContent = '…';
+  $('analysis-best').textContent = '';
+  var token = AN;
+  Eng.request({ type: 'eval', fen: fen, time: 700 }).then(function (res) {
+    if (AN !== token || !AN) return;
+    var white = pos.side === Chess.WHITE ? res.score : -res.score;
+    var mate = Review.mateIn(res.score);
+    $('analysis-eval').textContent = mate !== null
+      ? (pos.side === Chess.WHITE ? '' : '-') + 'M' + Math.abs(mate)
+      : (white > 0 ? '+' : '') + (white / 100).toFixed(1);
+    AN.best = res.move;
+    $('analysis-best').textContent = res.move
+      ? 'Best here: ' + ((res.pvSan && res.pvSan.length) ? res.pvSan.slice(0, 4).join(' ') : res.san)
+      : '';
+    setEvalBar($('rev-evalbar'), white, RV.flipped);
+  });
+}
+
+function onAnalysisMove(m) {
+  if (!AN) return;
+  var san = Chess.moveToSan(revBoard.pos, m);
+  AN.moves.push(m);
+  AN.sans.push(san);
+  AN.best = 0;
+  Sound.move();
+  revBoard.animateMove(m, function () {
+    renderAnalysis();
+    evaluateAnalysis();
+  });
+}
+
+function undoAnalysis() {
+  if (!AN || !AN.moves.length) return;
+  AN.moves.pop();
+  AN.sans.pop();
+  AN.best = 0;
+  var last = AN.moves.length ? AN.moves[AN.moves.length - 1] : null;
+  revBoard.setPosition(analysisFen(),
+    last ? { from: Chess.mFrom(last), to: Chess.mTo(last) } : null);
+  renderAnalysis();
+  evaluateAnalysis();
+}
+
+function playAnalysisBest() {
+  if (!AN) return;
+  if (AN.best) { onAnalysisMove(AN.best); return; }
+  $('analysis-best').textContent = 'Working it out…';
+  Eng.request({ type: 'eval', fen: analysisFen(), time: 700 }).then(function (res) {
+    if (!AN || !res.move) return;
+    onAnalysisMove(res.move);
+  });
+}
+
 function jumpToMistake() {
   if (!RV) return;
   var youWhite = RV.game.playerColor === 'w';
@@ -782,6 +1045,7 @@ function jumpToMistake() {
 
 function bindReview() {
   on($('btn-review-back'), 'click', function () {
+    if (analysisOn()) stopExplore();
     showReviewPane('picker');
     renderGameList();
   });
@@ -796,10 +1060,18 @@ function bindReview() {
     setEvalBar($('rev-evalbar'), info ? info.scoreAfter : 0, RV.flipped);
   });
   on($('btn-rev-mistakes'), 'click', jumpToMistake);
+  on($('btn-rev-explore'), 'click', function () {
+    if (!RV) return;
+    if (analysisOn()) stopExplore(); else startExplore();
+  });
+  on($('btn-an-undo'), 'click', undoAnalysis);
+  on($('btn-an-best'), 'click', playAnalysisBest);
+  on($('btn-an-exit'), 'click', stopExplore);
   on($('btn-rev-play'), 'click', function () {
     if (!RV) return;
-    var fen = RV.positions[RV.index];
+    var fen = analysisOn() ? analysisFen() : RV.positions[RV.index];
     var side = Chess.fromFen(fen).side;
+    if (analysisOn()) stopExplore();
     goTab('play');
     newGame({ fen: fen, color: side === Chess.WHITE ? 'w' : 'b', elo: RV.game.elo });
   });
@@ -820,8 +1092,312 @@ function bindReview() {
   });
   document.addEventListener('keydown', function (e) {
     if ($('screen-review').hidden || $('review-view').hidden) return;
+    if (analysisOn()) return;
     if (e.key === 'ArrowLeft') { gotoPly(RV.index - 1); e.preventDefault(); }
     if (e.key === 'ArrowRight') { gotoPly(RV.index + 1); e.preventDefault(); }
+  });
+}
+
+
+/* =========================================================== TRAIN SCREEN */
+
+/* Two things live here, and they come from the same place: the positions you
+   actually got wrong. The trainer serves them back on a spacing schedule, and
+   the report counts what they have in common. Neither invents a syllabus — the
+   only material is your own games. */
+
+var puzBoard = null;
+var PZ = null;   /* { queue, i, q, tries, assisted, settled, right } */
+
+function updateTrainBadge() {
+  var b = $('tab-badge');
+  if (!b) return;
+  var n = Store.puzzleSummary().due;
+  b.hidden = n === 0;
+  b.textContent = n > 99 ? '99+' : String(n);
+}
+
+function statBox(label, value) {
+  var d = el('div', 'acc-box');
+  d.appendChild(el('div', 'lbl', label));
+  d.appendChild(el('div', 'val', String(value)));
+  return d;
+}
+
+function renderTrainIndex() {
+  var sum = Store.puzzleSummary();
+  var counts = $('train-counts');
+  counts.innerHTML = '';
+  counts.appendChild(statBox('Due now', sum.due));
+  counts.appendChild(statBox('Collected', sum.total));
+  counts.appendChild(statBox('Mastered', sum.mastered));
+
+  var btn = $('btn-train-start');
+  btn.disabled = sum.total === 0;
+  btn.textContent = sum.due ? 'Train ' + sum.due + ' position' + (sum.due === 1 ? '' : 's')
+    : sum.total ? 'Practise anyway' : 'Start training';
+
+  $('train-summary').textContent = sum.total
+    ? 'Every mistake you make in a reviewed game is kept here and served back until you stop making it.'
+    : 'Review a game and the positions you got wrong are kept here as puzzles.';
+
+  renderWeakness();
+  updateTrainBadge();
+}
+
+function weakBar(label, value, share, sub) {
+  var row = el('div', 'weak-row');
+  var head = el('div', 'weak-head');
+  head.appendChild(el('span', 'weak-lbl', label));
+  head.appendChild(el('span', 'weak-val', value));
+  row.appendChild(head);
+  var track = el('div', 'weak-track');
+  var fill = el('div', 'weak-fill');
+  fill.style.width = Math.max(3, Math.round(share * 100)) + '%';
+  track.appendChild(fill);
+  row.appendChild(track);
+  if (sub) row.appendChild(el('div', 'weak-sub', sub));
+  return row;
+}
+
+function renderWeakness() {
+  var st = Store.stats(), wrap = $('weak-report');
+  wrap.innerHTML = '';
+  if (!st.myMoves) { $('weak-empty').hidden = false; return; }
+  $('weak-empty').hidden = true;
+
+  wrap.appendChild(el('p', 'hint',
+    st.reviewed + ' reviewed game' + (st.reviewed === 1 ? '' : 's') + ', ' + st.myMoves +
+    ' of your moves, ' + (st.accSum / st.myMoves).toFixed(1) + '% average accuracy.'));
+
+  /* Ranked by centipawns lost, not by how often it happens: hanging a queen
+     twice matters more than twenty slightly loose pawn moves. */
+  var motifs = Object.keys(st.motifs).map(function (k) {
+    return { key: k, n: st.motifs[k].n, cp: st.motifs[k].cp };
+  }).sort(function (a, b) { return b.cp - a.cp; });
+
+  if (motifs.length) {
+    wrap.appendChild(el('h3', 'sub', 'What your mistakes have in common'));
+    var top = motifs[0].cp || 1;
+    motifs.forEach(function (m) {
+      var def = Review.MOTIFS[m.key] || { label: m.key, blurb: '' };
+      wrap.appendChild(weakBar(def.label, m.n + '×  ' + (m.cp / 100).toFixed(1) + ' pawns',
+        m.cp / top, def.blurb));
+    });
+  }
+
+  var phases = ['opening', 'middlegame', 'endgame'].filter(function (k) {
+    return st.phases[k] && st.phases[k].moves;
+  });
+  if (phases.length) {
+    wrap.appendChild(el('h3', 'sub', 'Where in the game'));
+    phases.forEach(function (k) {
+      var ph = st.phases[k];
+      var acc = ph.accSum / ph.moves;
+      /* The bar shows inaccuracy against a fixed scale — full at 60% accurate —
+         rather than against the other phases. Normalising against each other
+         turned a two-point gap into two nearly-full bars, which said "you are
+         equally bad everywhere" when the numbers said nothing of the kind. */
+      wrap.appendChild(weakBar(Review.PHASES[k], acc.toFixed(1) + '% accurate',
+        Math.min(1, (100 - acc) / 40),
+        ph.n + ' tagged mistake' + (ph.n === 1 ? '' : 's') + ' over ' + ph.moves + ' moves'));
+    });
+  }
+
+  var pieces = Object.keys(st.pieces).map(function (k) {
+    return { key: k, n: st.pieces[k].n, cp: st.pieces[k].cp };
+  }).sort(function (a, b) { return b.cp - a.cp; }).slice(0, 4);
+  if (pieces.length) {
+    wrap.appendChild(el('h3', 'sub', 'Which piece you were moving'));
+    var pt = pieces[0].cp || 1;
+    pieces.forEach(function (p) {
+      var name = p.key.charAt(0).toUpperCase() + p.key.slice(1);
+      wrap.appendChild(weakBar(name + ' moves', p.n + '×  ' + (p.cp / 100).toFixed(1) + ' pawns', p.cp / pt));
+    });
+  }
+
+  if (Store.games().some(function (g) { return !g.review; })) {
+    wrap.appendChild(el('p', 'hint', 'Games you have not analysed are not counted here.'));
+  }
+}
+
+/* ------------------------------------------------------------- the trainer */
+
+function showTrainPane(which) {
+  $('train-index').hidden = which !== 'index';
+  $('train-puzzle').hidden = which !== 'puzzle';
+  $('btn-train-back').hidden = which === 'index';
+  if (which === 'index') $('train-progress').textContent = '';
+}
+
+function startTraining() {
+  var queue = Store.duePuzzles(20);
+  if (!queue.length) {
+    queue = Store.puzzles().slice().sort(function (a, b) {
+      return (a.box - b.box) || (b.cpLoss - a.cpLoss);
+    }).slice(0, 10);
+  }
+  if (!queue.length) return;
+  PZ = { queue: queue, i: 0, right: 0 };
+  showTrainPane('puzzle');
+  showPuzzle();
+}
+
+function showPuzzle() {
+  var q = PZ.queue[PZ.i];
+  PZ.q = q; PZ.tries = 0; PZ.assisted = false; PZ.settled = false;
+
+  var pos = Chess.fromFen(q.fen);
+  var toMove = pos.side === Chess.WHITE ? 'White' : 'Black';
+
+  if (!puzBoard) puzBoard = new Board($('puzzle-board'), { onMove: onPuzzleMove });
+  puzBoard.showCoords = Store.settings().coords;
+  puzBoard.el.classList.toggle('nocoords', !Store.settings().coords);
+  puzBoard.setFlipped(pos.side === Chess.BLACK);
+  puzBoard.setArrows([]);
+  puzBoard.setFrozen(false);
+  puzBoard.setPosition(q.fen, null);
+
+  $('puz-top').querySelector('.pname').textContent = 'From one of your games';
+  $('puz-bot').querySelector('.pname').textContent = toMove + ' to play — you';
+  $('train-progress').textContent = (PZ.i + 1) + ' of ' + PZ.queue.length;
+  $('btn-puz-next').hidden = true;
+  ['btn-puz-hint', 'btn-puz-show', 'btn-puz-skip'].forEach(function (id) { $(id).hidden = false; });
+
+  var v = $('puzzle-prompt');
+  v.innerHTML = '';
+  var head = el('div', 'vhead');
+  head.appendChild(el('span', 'vmove', 'Find the move'));
+  if (q.box > 0) head.appendChild(el('span', 'vnote', 'seen ' + q.attempts + '×'));
+  v.appendChild(head);
+  v.appendChild(el('div', 'vnote', 'You played ' + q.playedSan + ' here. Something was better.'));
+}
+
+function puzzleFeedback(kind, headline, lines) {
+  var v = $('puzzle-prompt');
+  v.innerHTML = '';
+  var head = el('div', 'vhead');
+  head.appendChild(el('span', 'vmove', headline));
+  head.appendChild(el('span', 'tone-' + kind, kind === 'best' ? 'Correct' : 'Not it'));
+  v.appendChild(head);
+  (lines || []).forEach(function (t) { if (t) v.appendChild(el('div', 'vnote', t)); });
+}
+
+function onPuzzleMove(m) {
+  if (!PZ || PZ.settled) return;
+  var san = Chess.moveToSan(puzBoard.pos, m);
+  if (Chess.moveToUci(m) === PZ.q.solution) { settlePuzzle(true, m, san, false); return; }
+
+  /* The stored solution is one good move, not proof that nothing else works.
+     Asking the engine before calling an answer wrong is the difference between
+     training and pattern-matching the answer key. */
+  PZ.tries++;
+  puzBoard.setFrozen(true);
+  puzzleFeedback('best', san, ['Checking whether that works too…']);
+  Eng.request({ type: 'probe', fen: PZ.q.fen, move: m, time: 450, depth: 12 }).then(function (res) {
+    if (!PZ || PZ.settled) return;
+    puzBoard.setFrozen(false);
+    var played = res.playedScore;
+    var loss = (played === null || played === undefined) ? 9999 : (res.bestScore - played);
+    if (loss <= 30) { settlePuzzle(true, m, san, true); return; }
+
+    var lines = [];
+    if (res.punish && res.punish.piece) {
+      lines.push(san + ' loses the ' + res.punish.piece + ' on ' + res.punish.square +
+                 ' to ' + res.punish.san + '.');
+    } else if (res.punish) {
+      lines.push('After ' + san + ', ' + res.punish.san + ' is the reply.');
+    }
+    if (loss < 9000) lines.push('That is ' + (loss / 100).toFixed(1) + ' pawns worse than the best move.');
+    if (PZ.tries >= 2) lines.push('Hint: ' + hintText(PZ.q));
+    lines.push('Try again, or tap Show me.');
+    puzzleFeedback('blunder', san, lines);
+    puzBoard.setPosition(PZ.q.fen, null);
+    haptic(20);
+  });
+}
+
+function hintText(q) {
+  var pos = Chess.fromFen(q.fen);
+  var from = Chess.nameToSq(q.solution.slice(0, 2));
+  var piece = pos.board[from];
+  var names = ['', 'pawn', 'knight', 'bishop', 'rook', 'queen', 'king'];
+  if (!piece) return 'look for a forcing move.';
+  return 'move the ' + names[Chess.typeOf(piece)] + ' on ' + q.solution.slice(0, 2) + '.';
+}
+
+function settlePuzzle(correct, move, san, alternative) {
+  PZ.settled = true;
+  /* Credit only for finding it first time unaided — anything else and the
+     position comes back, which is the whole point of keeping it. */
+  var clean = correct && PZ.tries === 0 && !PZ.assisted;
+  Store.gradePuzzle(PZ.q.id, clean);
+  if (clean) PZ.right++;
+  updateTrainBadge();
+
+  puzBoard.setFrozen(true);
+  puzBoard.animateMove(move, function () {
+    var q = PZ.q, lines = [];
+    if (correct && alternative) lines.push(san + ' works as well as ' + q.solutionSan + '.');
+    else if (correct) lines.push(q.note);
+    else lines.push('The move was ' + q.solutionSan + '. ' + q.note);
+    if (q.motifLabel) {
+      var def = Review.MOTIFS[q.motif];
+      lines.push(q.motifLabel + ' — ' + (def ? def.blurb : ''));
+    }
+    if (!clean) lines.push('Kept in the deck, so this one comes back.');
+    puzzleFeedback(correct ? 'best' : 'blunder',
+      correct ? (PZ.tries ? 'Found it' : 'Correct') : q.solutionSan, lines);
+    if (correct) Sound.win(); else haptic(20);
+    ['btn-puz-hint', 'btn-puz-show', 'btn-puz-skip'].forEach(function (id) { $(id).hidden = true; });
+    var next = $('btn-puz-next');
+    next.hidden = false;
+    next.textContent = PZ.i + 1 < PZ.queue.length ? 'Next puzzle' : 'Finish';
+  });
+}
+
+function nextPuzzle() {
+  if (!PZ) return;
+  PZ.i++;
+  if (PZ.i >= PZ.queue.length) {
+    var n = PZ.queue.length, right = PZ.right;
+    PZ = null;
+    showTrainPane('index');
+    renderTrainIndex();
+    $('train-summary').textContent = 'Session done — ' + right + ' of ' + n +
+      ' first time. The ones you missed are due again straight away.';
+    return;
+  }
+  showPuzzle();
+}
+
+function bindTrain() {
+  on($('btn-train-start'), 'click', startTraining);
+  on($('btn-train-back'), 'click', function () {
+    PZ = null;
+    showTrainPane('index');
+    renderTrainIndex();
+  });
+  on($('btn-puz-next'), 'click', nextPuzzle);
+  on($('btn-puz-skip'), 'click', function () {
+    if (!PZ || PZ.settled) return;
+    nextPuzzle();
+  });
+  on($('btn-puz-hint'), 'click', function () {
+    if (!PZ || PZ.settled) return;
+    PZ.tries++;
+    puzzleFeedback('blunder', 'Hint', [
+      'Try to ' + hintText(PZ.q),
+      PZ.q.motifLabel ? 'The idea is a ' + PZ.q.motifLabel.toLowerCase() + ' pattern.' : ''
+    ]);
+  });
+  on($('btn-puz-show'), 'click', function () {
+    if (!PZ || PZ.settled) return;
+    PZ.assisted = true;
+    var pos = Chess.fromFen(PZ.q.fen);
+    var mv = Chess.sanToMove(pos, PZ.q.solutionSan);
+    if (!mv) { nextPuzzle(); return; }
+    settlePuzzle(false, mv, PZ.q.solutionSan, false);
   });
 }
 
@@ -1000,13 +1576,15 @@ function bindLearn() {
 /* ============================================================= NAVIGATION */
 
 function goTab(name) {
-  ['play', 'review', 'learn'].forEach(function (t) {
+  if (name !== 'review' && analysisOn()) stopExplore();
+  ['play', 'review', 'train', 'learn'].forEach(function (t) {
     $('screen-' + t).hidden = t !== name;
   });
   Array.prototype.forEach.call($('tabs').children, function (b) {
     b.classList.toggle('on', b.dataset.goto === name);
   });
   if (name === 'review') { renderGameList(); if (!RV) showReviewPane('picker'); }
+  if (name === 'train' && !PZ) { showTrainPane('index'); renderTrainIndex(); }
   if (name === 'learn' && !LS) renderLearnIndex();
   if (name === 'play' && (!G || G.over)) renderSetup();
   window.scrollTo(0, 0);
@@ -1023,7 +1601,14 @@ function applyTheme() {
 /* Redraw every board that exists — a piece set change has to reach the game,
    the review and whichever lesson happens to be open. */
 function redrawBoards() {
-  [board, revBoard, lessonBoard].forEach(function (b) { if (b) b.render(); });
+  [board, revBoard, puzBoard, lessonBoard].forEach(function (b) { if (b) b.render(); });
+}
+
+/* The threshold only means anything while the coach is on, so it should not
+   look like a live setting when it is off. */
+function coachLevelEnabled(on_) {
+  $('opt-coach-level').disabled = !on_;
+  $('field-coach-level').classList.toggle('disabled', !on_);
 }
 
 function bindSettings() {
@@ -1034,6 +1619,9 @@ function bindSettings() {
     $('opt-coords').checked = s.coords;
     $('opt-sound').checked = s.sound;
     $('opt-confirm').checked = s.confirmMoves;
+    $('opt-coach').checked = s.coach;
+    $('opt-coach-level').value = String(s.coachLevel);
+    coachLevelEnabled(s.coach);
     $('opt-review-depth').value = String(s.reviewTime);
     $('opt-theme').value = s.theme;
     $('opt-pieces').value = s.pieces;
@@ -1050,7 +1638,7 @@ function bindSettings() {
   });
   on($('opt-coords'), 'change', function () {
     Store.setSetting('coords', this.checked);
-    [board, revBoard, lessonBoard].forEach(function (b) {
+    [board, revBoard, puzBoard, lessonBoard].forEach(function (b) {
       if (!b) return;
       b.showCoords = Store.settings().coords;
       b.el.classList.toggle('nocoords', !Store.settings().coords);
@@ -1059,6 +1647,13 @@ function bindSettings() {
   });
   on($('opt-sound'), 'change', function () { Store.setSetting('sound', this.checked); });
   on($('opt-confirm'), 'change', function () { Store.setSetting('confirmMoves', this.checked); });
+  on($('opt-coach'), 'change', function () {
+    Store.setSetting('coach', this.checked);
+    coachLevelEnabled(this.checked);
+    if (!this.checked) { coachPending = 0; $('coach-card').hidden = true; }
+    updateStatus();
+  });
+  on($('opt-coach-level'), 'change', function () { Store.setSetting('coachLevel', +this.value); });
   on($('opt-review-depth'), 'change', function () { Store.setSetting('reviewTime', +this.value); });
   on($('opt-theme'), 'change', function () { Store.setSetting('theme', this.value); applyTheme(); });
   on($('opt-pieces'), 'change', function () {
@@ -1150,10 +1745,14 @@ function setupInstallAndUpdates() {
 /* =================================================================== init */
 
 function init() {
+  /* The store keeps puzzles as UCI strings but never loads the rules engine,
+     so hand it the converter it needs. */
+  Store.useUci(Chess.moveToUci);
   applyTheme();
   levelOptions();
   bindPlay();
   bindReview();
+  bindTrain();
   bindLearn();
   bindSettings();
   setupInstallAndUpdates();
@@ -1166,6 +1765,7 @@ function init() {
   renderSetup();
   renderGameList();
   renderLearnIndex();
+  updateTrainBadge();
   goTab('play');
 
   /* A broken lesson would mean a step that cannot be completed, so shout about

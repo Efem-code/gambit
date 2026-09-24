@@ -21,7 +21,7 @@ git add -A
 if git diff --cached --quiet; then
   note "nothing changed"
 else
-  git commit -qm "Deploy $STAMP"
+  git commit -q -m "Deploy $STAMP" -m "Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>"
   note "committed"
 fi
 git push -q origin main

@@ -145,19 +145,21 @@ Board.prototype.renderMarks = function () {
     var f = this.rcOf(a.from), t = this.rcOf(a.to);
     var x1 = f.col + 0.5, y1 = f.row + 0.5, x2 = t.col + 0.5, y2 = t.row + 0.5;
     var dx = x2 - x1, dy = y2 - y1, len = Math.sqrt(dx * dx + dy * dy) || 1;
-    /* Stop the shaft short of the centre so the head sits on the square. */
-    var back = 0.34;
+    /* A one-square move has barely any shaft, so a full-size head covers both
+       squares and reads as a blob rather than a direction. Shrink it to fit. */
+    var scale = Math.min(1, len / 1.6);
+    var back = 0.34 * scale;
     var ex = x2 - dx / len * back, ey = y2 - dy / len * back;
     arrows += '<line class="bd-arrow ' + (a.cls || '') + '" x1="' + x1 + '" y1="' + y1 +
               '" x2="' + ex + '" y2="' + ey + '"/>' +
               '<polygon class="bd-arrowhead ' + (a.cls || '') + '" points="' +
-              arrowHead(ex, ey, dx / len, dy / len) + '"/>';
+              arrowHead(ex, ey, dx / len, dy / len, scale) + '"/>';
   }
   this.overlayEl.innerHTML = arrows + dots;
 };
 
-function arrowHead(x, y, ux, uy) {
-  var w = 0.17, h = 0.34;
+function arrowHead(x, y, ux, uy, scale) {
+  var w = 0.17 * (scale || 1), h = 0.34 * (scale || 1);
   var px = -uy, py = ux;
   return [
     (x + ux * h) + ',' + (y + uy * h),

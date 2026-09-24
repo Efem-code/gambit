@@ -85,6 +85,16 @@
         </div>
       </div>
 
+      <!-- Shown in place of the move while the coach has something to say. -->
+      <div class="coach-card" id="coach-card" hidden>
+        <div class="coach-head"><span class="coach-tag" id="coach-tag">Wait</span><span id="coach-move"></span></div>
+        <p id="coach-note"></p>
+        <div class="row">
+          <button class="ghost" id="btn-coach-back">Take it back</button>
+          <button class="primary" id="btn-coach-go">Play it anyway</button>
+        </div>
+      </div>
+
       <div class="result-card" id="result-card" hidden>
         <h2 id="result-title"></h2>
         <p id="result-detail"></p>
@@ -139,11 +149,29 @@
           <button class="ghost" id="btn-rev-last" aria-label="Last move">&#8677;</button>
           <button class="ghost" id="btn-rev-flip">Flip</button>
         </div>
+        <!-- The analysis board is the same board in a different mode: move the
+             pieces yourself and the engine says what it thinks of the result. -->
+        <div class="analysis" id="analysis" hidden>
+          <div class="analysis-head">
+            <strong>Analysis</strong>
+            <span class="analysis-eval" id="analysis-eval">—</span>
+          </div>
+          <p class="analysis-line" id="analysis-line">Move a piece to try an idea. Nothing here changes the game.</p>
+          <p class="hint" id="analysis-best"></p>
+          <div class="controls">
+            <button class="ghost" id="btn-an-undo">Undo</button>
+            <button class="ghost" id="btn-an-best">Best move</button>
+            <button class="ghost" id="btn-an-exit">Close</button>
+            <button class="ghost wide" id="btn-rev-play">Play on from here</button>
+          </div>
+        </div>
+
         <div class="verdict" id="verdict"></div>
         <div class="controls">
-          <button class="ghost wide" id="btn-rev-mistakes">Jump to my mistakes</button>
-          <button class="ghost wide" id="btn-rev-play">Play on from here</button>
+          <button class="ghost" id="btn-rev-mistakes">Jump to my mistakes</button>
+          <button class="ghost" id="btn-rev-explore">Explore this position</button>
         </div>
+
         <div class="accuracy-row" id="accuracy-row"></div>
         <svg class="evalgraph" id="evalgraph" viewBox="0 0 300 70" preserveAspectRatio="none" aria-label="Evaluation across the game"></svg>
         <ol class="movelist reviewed" id="review-movelist"></ol>
@@ -184,6 +212,50 @@
     </div>
   </section>
 
+  <!-- ------------------------------------------------------------ TRAIN -->
+  <section class="screen" id="screen-train" data-tab="train" hidden>
+    <header class="bar">
+      <button class="icon-btn back" id="btn-train-back" aria-label="Back" hidden>&#8249;</button>
+      <h1>Train</h1>
+      <span class="bar-note" id="train-progress"></span>
+    </header>
+
+    <div class="pane" id="train-index">
+      <div class="card">
+        <h2>Your mistakes</h2>
+        <p class="hint" id="train-summary">Review a game and the positions you got wrong are kept here as puzzles.</p>
+        <div class="acc-row3" id="train-counts"></div>
+        <button class="primary" id="btn-train-start" disabled>Start training</button>
+      </div>
+
+      <div class="card">
+        <h2>Where you lose points</h2>
+        <p class="hint" id="weak-empty">Nothing to report yet — this fills in as you review games.</p>
+        <div id="weak-report"></div>
+      </div>
+    </div>
+
+    <div class="pane game-pane" id="train-puzzle" hidden>
+      <div class="game-top">
+        <div class="player" id="puz-top"><span class="pname"></span></div>
+      </div>
+      <div class="board-wrap">
+        <div class="board-holder"><div id="puzzle-board"></div></div>
+      </div>
+      <div class="game-bottom"><div class="player" id="puz-bot"><span class="pname"></span></div></div>
+
+      <div class="game-side">
+        <div class="verdict" id="puzzle-prompt"></div>
+        <div class="controls">
+          <button class="ghost" id="btn-puz-hint">Hint</button>
+          <button class="ghost" id="btn-puz-show">Show me</button>
+          <button class="ghost" id="btn-puz-skip">Skip</button>
+        </div>
+        <button class="primary" id="btn-puz-next" hidden>Next puzzle</button>
+      </div>
+    </div>
+  </section>
+
   <!-- --------------------------------------------------------- SETTINGS -->
   <div class="sheet" id="sheet-settings" hidden>
     <div class="sheet-inner">
@@ -193,6 +265,16 @@
       <label class="toggle"><input type="checkbox" id="opt-coords"> <span>Board coordinates</span></label>
       <label class="toggle"><input type="checkbox" id="opt-sound"> <span>Move sounds</span></label>
       <label class="toggle"><input type="checkbox" id="opt-confirm"> <span>Confirm each move before it is played</span></label>
+      <label class="toggle"><input type="checkbox" id="opt-coach"> <span>Coach mode — warn me before a bad move</span></label>
+      <p class="hint indent">The engine checks your move before it is played and tells you what it misses. Games played with the coach on do not change your rating, because it would not be your rating.</p>
+      <label class="field" id="field-coach-level">
+        <span>Warn me about</span>
+        <select id="opt-coach-level">
+          <option value="250">Blunders only — losing a piece or worse</option>
+          <option value="120">Mistakes too</option>
+          <option value="60">Everything, including small slips</option>
+        </select>
+      </label>
       <label class="field">
         <span>Review depth</span>
         <select id="opt-review-depth">
@@ -234,6 +316,7 @@
   <nav class="tabs" id="tabs">
     <button data-goto="play" class="on"><span class="tab-ico">&#9814;</span>Play</button>
     <button data-goto="review"><span class="tab-ico">&#9202;</span>Review</button>
+    <button data-goto="train"><span class="tab-ico">&#9876;</span>Train<span class="tab-badge" id="tab-badge" hidden></span></button>
     <button data-goto="learn"><span class="tab-ico">&#9998;</span>Learn</button>
   </nav>
 
