@@ -554,15 +554,15 @@ Search.prototype.think = function (p, opts) {
    not measurements — see README. */
 var LEVELS = [
   { elo: 550, name: 'Beginner', depth: 1, time: 120, noise: 260, blunder: 0.28 },
-  { elo: 700, name: 'Novice', depth: 2, time: 150, noise: 230, blunder: 0.247 },
-  { elo: 850, name: 'Casual', depth: 2, time: 210, noise: 185, blunder: 0.19 },
-  { elo: 1000, name: 'Club starter', depth: 2, time: 300, noise: 140, blunder: 0.139 },
-  { elo: 1150, name: 'Club', depth: 2, time: 360, noise: 115, blunder: 0.109 },
-  { elo: 1300, name: 'Solid club', depth: 3, time: 390, noise: 100, blunder: 0.095 },
-  { elo: 1450, name: 'Strong club', depth: 4, time: 540, noise: 80, blunder: 0.072 },
-  { elo: 1600, name: 'Very strong', depth: 4, time: 700, noise: 60, blunder: 0.052 },
-  { elo: 1750, name: 'Sharp', depth: 5, time: 880, noise: 50, blunder: 0.038 },
-  { elo: 1900, name: 'Relentless', depth: 7, time: 1330, noise: 30, blunder: 0.019 },
+  { elo: 700, name: 'Novice', depth: 2, time: 160, noise: 220, blunder: 0.236 },
+  { elo: 850, name: 'Casual', depth: 2, time: 210, noise: 185, blunder: 0.191 },
+  { elo: 1000, name: 'Club starter', depth: 2, time: 290, noise: 145, blunder: 0.144 },
+  { elo: 1150, name: 'Club', depth: 2, time: 340, noise: 120, blunder: 0.118 },
+  { elo: 1300, name: 'Solid club', depth: 3, time: 390, noise: 100, blunder: 0.093 },
+  { elo: 1450, name: 'Strong club', depth: 4, time: 660, noise: 65, blunder: 0.055 },
+  { elo: 1600, name: 'Very strong', depth: 5, time: 840, noise: 50, blunder: 0.04 },
+  { elo: 1750, name: 'Sharp', depth: 7, time: 1390, noise: 25, blunder: 0.017 },
+  { elo: 1900, name: 'Relentless', depth: 8, time: 1910, noise: 15, blunder: 0.009 },
   { elo: 2050, name: 'Full strength', depth: 64, time: 6000, noise: 0, blunder: 0 }
 ];
 

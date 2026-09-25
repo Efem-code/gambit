@@ -105,6 +105,42 @@ var step = span / N;
 console.log('\nSpan %d Elo over %d steps -> %d per step (the labels claimed %d).',
   Math.round(span), N, Math.round(step), (LEVELS[N].elo - LEVELS[0].elo) / N);
 
+/* Is there anything left to correct? A match of n games pins a step to only so
+   many Elo, so even a perfectly even ladder measures uneven. If the spread of
+   the steps is no bigger than that error, the bumps are the measurement, not
+   the ladder, and re-spacing against them fits noise and makes things worse.
+   That is not hypothetical: the second re-spacing of this ladder was run on
+   residuals that were mostly noise and it pushed the top step to -35, putting
+   the ladder backwards again. It had to be reverted. */
+var steps = [], errs = [];
+for (i = 0; i < lastMeasured; i++) {
+  var gp = gaps[LEVELS[i].elo + '>' + LEVELS[i + 1].elo];
+  var sp = Math.min(0.99, Math.max(0.01, gp.score));
+  steps.push(gp.elo);
+  errs.push(Math.sqrt(Math.max(0.01, sp * (1 - sp)) / gp.games) *
+            (400 / (Math.log(10) * sp * (1 - sp))));
+}
+function mean(a) { return a.reduce(function (x, y) { return x + y; }, 0) / a.length; }
+var mu = mean(steps);
+var spread = Math.sqrt(mean(steps.map(function (x) { return (x - mu) * (x - mu); })));
+var noise = mean(errs);
+var real = Math.sqrt(Math.max(0, spread * spread - noise * noise));
+
+console.log('\nSteps vary by %d Elo. One match measures a step to +/- %d,',
+  Math.round(spread), Math.round(noise));
+console.log('so about %d of that is real unevenness and the rest is the measurement.',
+  Math.round(real));
+
+if (real < noise * 0.6) {
+  console.log('\nThat is inside the noise. Re-spacing against these numbers would');
+  console.log('fit the measurement rather than the ladder — it would most likely');
+  console.log('come out worse. Play more games a pair before trying again.');
+  if (write) {
+    console.error('\nRefusing to write. Pass --force if you mean it anyway.');
+    if (process.argv.indexOf('--force') < 0) process.exit(5);
+  }
+}
+
 /* ------------------------------------------------ settings at any strength */
 
 function lerp(a, b, f) { return a + (b - a) * f; }
