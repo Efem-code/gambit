@@ -51,13 +51,15 @@ Board.prototype._build = function () {
   }
   this.squaresEl.innerHTML = html;
 
-  if (this.interactive) {
-    this.el.addEventListener('pointerdown', function (e) { self._down(e); });
-    this.el.addEventListener('pointermove', function (e) { self._move(e); });
-    this.el.addEventListener('pointerup', function (e) { self._up(e); });
-    this.el.addEventListener('pointercancel', function () { self._cancelDrag(); });
-    this.el.addEventListener('contextmenu', function (e) { e.preventDefault(); });
-  }
+  /* Always listen, and decide in _down whether to act. A board can change its
+     mind about being interactive — the review board becomes an analysis board
+     and back again — and attaching only at construction meant that switch did
+     nothing at all. */
+  this.el.addEventListener('pointerdown', function (e) { self._down(e); });
+  this.el.addEventListener('pointermove', function (e) { self._move(e); });
+  this.el.addEventListener('pointerup', function (e) { self._up(e); });
+  this.el.addEventListener('pointercancel', function () { self._cancelDrag(); });
+  this.el.addEventListener('contextmenu', function (e) { e.preventDefault(); });
 };
 
 /* ------------------------------------------------------- geometry helpers */
@@ -171,7 +173,7 @@ function arrowHead(x, y, ux, uy, scale) {
 /* ----------------------------------------------------------- interaction */
 
 Board.prototype._down = function (e) {
-  if (this.frozen || this.pendingPromo) return;
+  if (!this.interactive || this.frozen || this.pendingPromo) return;
   var s = this._pointSquare(e);
   if (s < 0) return;
   var piece = this.pos.board[s];

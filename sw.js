@@ -3,7 +3,7 @@
 /* BUILD is rewritten by phone.sh on every deploy. It has to change or the
    browser sees an identical service worker, keeps the old one, and the update
    never reaches the phone. */
-const BUILD = '20260925-111130';
+const BUILD = '20260925-115252';
 const CACHE = 'gambit-' + BUILD;
 const SHELL = [
   './', './index.html', './styles.css',

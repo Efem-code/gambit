@@ -42,11 +42,12 @@ if (!dir) { console.error('usage: node reanchor.js <dir> [--write]'); process.ex
 var LEVELS = Engine.LEVELS;
 var N = LEVELS.length - 1;                 /* number of steps */
 
-/* The top level's own match is excluded. It was played before the exactRoot
-   fix, when that level searched with a narrowing root window and was measurably
-   the weakest thing on the ladder; the number it produced describes a bug, not
-   a level. Its settings are the engine's ceiling and are kept as they are. */
-var EXCLUDE_TOP_MATCH = true;
+/* --exclude-top drops the top level's own match. That was needed for the first
+   round, whose top match was played before the exactRoot fix: back then the
+   strongest level searched with a narrowing root window and measured as the
+   weakest thing on the ladder, so its number described a bug rather than a
+   level. Matches played since measure the level, and are used. */
+var EXCLUDE_TOP_MATCH = process.argv.indexOf('--exclude-top') >= 0;
 
 var gaps = {};
 fs.readdirSync(dir).filter(function (f) { return /^m_\d+_\d+\.json$/.test(f); })
