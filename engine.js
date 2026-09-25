@@ -535,7 +535,12 @@ Search.prototype.think = function (p, opts) {
 
   return {
     move: best, score: bestScore, pv: pv, depth: completed,
-    nodes: this.nodes, ms: Date.now() - t0, rootMoves: rootScores
+    nodes: this.nodes, ms: Date.now() - t0, rootMoves: rootScores,
+    /* Whether rootMoves holds true scores or merely upper bounds. Without
+       exactRoot every move after the best one is searched against a narrowed
+       window and comes back with a bound, and most of those bounds are equal.
+       Anything that ranks the list has to know which it is looking at. */
+    rootExact: exactRoot
   };
 };
 
@@ -548,22 +553,32 @@ Search.prototype.think = function (p, opts) {
    middle levels feel like a human of that rating. The Elo figures are targets,
    not measurements — see README. */
 var LEVELS = [
-  { elo: 400,  name: 'Beginner',     depth: 1, time: 120,  noise: 260, blunder: 0.28 },
-  { elo: 600,  name: 'Novice',       depth: 2, time: 200,  noise: 190, blunder: 0.20 },
-  { elo: 800,  name: 'Casual',       depth: 2, time: 300,  noise: 140, blunder: 0.14 },
-  { elo: 1000, name: 'Club starter', depth: 3, time: 400,  noise: 100, blunder: 0.09 },
-  { elo: 1200, name: 'Club',         depth: 4, time: 600,  noise: 70,  blunder: 0.06 },
-  { elo: 1400, name: 'Solid club',   depth: 5, time: 900,  noise: 45,  blunder: 0.035 },
-  { elo: 1600, name: 'Strong club',  depth: 6, time: 1200, noise: 30,  blunder: 0.02 },
-  { elo: 1800, name: 'Expert',       depth: 8, time: 1800, noise: 18,  blunder: 0.01 },
-  { elo: 2000, name: 'Candidate',    depth: 10, time: 2500, noise: 10, blunder: 0.004 },
-  { elo: 2200, name: 'Master',       depth: 14, time: 4000, noise: 4,  blunder: 0 },
-  { elo: 2400, name: 'Full strength', depth: 64, time: 6000, noise: 0, blunder: 0 }
+  { elo: 550, name: 'Beginner', depth: 1, time: 120, noise: 260, blunder: 0.28 },
+  { elo: 700, name: 'Novice', depth: 2, time: 160, noise: 220, blunder: 0.236 },
+  { elo: 850, name: 'Casual', depth: 2, time: 210, noise: 185, blunder: 0.191 },
+  { elo: 1000, name: 'Club starter', depth: 2, time: 290, noise: 145, blunder: 0.144 },
+  { elo: 1150, name: 'Club', depth: 2, time: 340, noise: 120, blunder: 0.118 },
+  { elo: 1300, name: 'Solid club', depth: 3, time: 390, noise: 100, blunder: 0.093 },
+  { elo: 1450, name: 'Strong club', depth: 4, time: 660, noise: 65, blunder: 0.055 },
+  { elo: 1600, name: 'Very strong', depth: 5, time: 840, noise: 50, blunder: 0.04 },
+  { elo: 1750, name: 'Sharp', depth: 7, time: 1390, noise: 25, blunder: 0.017 },
+  { elo: 1900, name: 'Relentless', depth: 8, time: 1910, noise: 15, blunder: 0.009 },
+  { elo: 2050, name: 'Full strength', depth: 64, time: 6000, noise: 0, blunder: 0 }
 ];
 
+/* Settings saved by an older version hold a number this ladder no longer has,
+   because re-spacing the levels moved every label. Falling back to a fixed
+   middle level would silently hand someone a different opponent from the one
+   they chose, so pick the nearest rung instead: the closest thing to what they
+   asked for is the level nearest the number they picked. */
 function levelFor(elo) {
-  for (var i = 0; i < LEVELS.length; i++) if (LEVELS[i].elo === elo) return LEVELS[i];
-  return LEVELS[4];
+  var bestI = 0, bestD = Infinity;
+  for (var i = 0; i < LEVELS.length; i++) {
+    if (LEVELS[i].elo === elo) return LEVELS[i];
+    var d = Math.abs(LEVELS[i].elo - elo);
+    if (d < bestD) { bestD = d; bestI = i; }
+  }
+  return LEVELS[bestI];
 }
 
 /* Pick the move this level would actually play. */
@@ -571,6 +586,11 @@ function chooseMove(result, cfg) {
   var rm = result.rootMoves;
   if (!rm.length) return result.move;
   if (!cfg.noise && !cfg.blunder) return result.move;
+  /* Ranking bounds is not ranking moves. Without exact root scores the moves
+     after the best one mostly share one bound, so adding noise to them picks a
+     near-random legal move — measured at 2674 centipawns a move, which is not
+     a weak opponent but a broken one. Refuse, and play the best move instead. */
+  if (!result.rootExact) return result.move;
 
   /* Never give away a forced mate that is already on the board, and never
      decline one — even a beginner notices mate in one. */

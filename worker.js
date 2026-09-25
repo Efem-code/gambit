@@ -69,10 +69,13 @@ self.onmessage = function (e) {
       }
     }
 
-    /* Weaker levels need every root move scored honestly before noise is
-       applied, or the "mistakes" they make are arbitrary rather than plausible. */
+    /* Every root move is scored honestly, at every level. Weak levels need it
+       because noise is applied to those scores. The strongest level needs it
+       too: tying it to noise meant the one level with none searched with a
+       narrowing root window, and it measured 61 centipawns a move worse than
+       the level below — the top of the ladder was the weakest thing on it. */
     var r = search.think(p, {
-      depth: cfg.depth, time: cfg.time, exactRoot: cfg.noise > 0
+      depth: cfg.depth, time: cfg.time, exactRoot: true
     });
     if (!r.move) { self.postMessage({ type: 'move', id: msg.id, move: 0 }); return; }
     var chosen = Engine.chooseMove(r, cfg);
@@ -86,7 +89,9 @@ self.onmessage = function (e) {
 
   if (msg.type === 'eval') {
     p = Chess.fromFen(msg.fen);
-    var res = search.think(p, { time: msg.time || 800, depth: msg.depth || 64, exactRoot: !!msg.exactRoot });
+    /* The reply ranks root moves and quotes a score, so the root has to be
+       searched exactly whatever the caller asked for. */
+    var res = search.think(p, { time: msg.time || 800, depth: msg.depth || 64, exactRoot: true });
     self.postMessage({
       type: 'eval', id: msg.id, move: res.move,
       san: res.move ? Chess.moveToSan(p, res.move) : '',

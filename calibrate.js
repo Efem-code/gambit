@@ -25,7 +25,7 @@ function pickMove(search, pos, cfg, useBook) {
     var bm = B.probe(pos);
     if (bm) return bm;
   }
-  var r = search.think(pos, { depth: cfg.depth, time: cfg.time, exactRoot: cfg.noise > 0 });
+  var r = search.think(pos, { depth: cfg.depth, time: cfg.time, exactRoot: true });
   if (!r.move) return 0;
   return E.chooseMove(r, cfg);
 }

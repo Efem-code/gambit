@@ -51,13 +51,13 @@ var Eng = (function () {
           var cfg = Engine.levelFor(msg.elo);
           var bm = msg.useBook !== false ? Book.probe(p) : 0;
           if (bm) return resolve({ type: 'move', move: bm, san: Chess.moveToSan(p, bm), score: 0, depth: 0, book: true });
-          var r = localSearch.think(p, { depth: cfg.depth, time: cfg.time, exactRoot: cfg.noise > 0 });
+          var r = localSearch.think(p, { depth: cfg.depth, time: cfg.time, exactRoot: true });
           if (!r.move) return resolve({ type: 'move', move: 0 });
           var chosen = Engine.chooseMove(r, cfg);
           return resolve({ type: 'move', move: chosen, san: Chess.moveToSan(p, chosen), score: r.score, depth: r.depth });
         }
         if (msg.type === 'eval') {
-          var res = localSearch.think(p, { time: msg.time || 800, exactRoot: !!msg.exactRoot });
+          var res = localSearch.think(p, { time: msg.time || 800, exactRoot: true });
           return resolve({ type: 'eval', move: res.move, san: res.move ? Chess.moveToSan(p, res.move) : '',
                            score: res.score, depth: res.depth, pv: res.pv, pvSan: [] });
         }
@@ -170,18 +170,28 @@ function levelOptions() {
     o.value = lv.elo;
     sel.appendChild(o);
   });
-  sel.value = Store.settings().elo;
+  /* A level chosen before the ladder was re-spaced holds a number that is no
+     longer on it, which would leave the menu showing the wrong entry. Snap it
+     to the nearest rung and save that, so what is shown is what will be played. */
+  var want = Engine.levelFor(Store.settings().elo).elo;
+  if (want !== Store.settings().elo) Store.setSetting('elo', want);
+  sel.value = want;
   updateLevelNote();
 }
 function updateLevelNote() {
   var lv = Engine.levelFor(+$('sel-level').value);
   var note;
-  if (lv.elo <= 600) note = 'Plays legal moves and spots the obvious, but hangs pieces regularly. A fair fight if you are just starting.';
+  if (lv.elo <= 700) note = 'Plays legal moves and spots the obvious, but hangs pieces regularly. A fair fight if you are just starting.';
   else if (lv.elo <= 1000) note = 'Sees one move ahead reliably. Will punish a hanging piece, will miss most tactics.';
-  else if (lv.elo <= 1400) note = 'Sees simple tactics coming and rarely gives material away for nothing.';
-  else if (lv.elo <= 1800) note = 'Calculates several moves ahead. You will need a real plan.';
-  else note = 'Thinks for a few seconds a move and plays close to its ceiling. Expect to lose.';
-  $('level-note').textContent = note + ' The numbers are targets rather than measured ratings.';
+  else if (lv.elo <= 1300) note = 'Sees simple tactics coming and rarely gives material away for nothing.';
+  else if (lv.elo <= 1600) note = 'Calculates several moves ahead. You will need a real plan.';
+  else if (lv.elo <= 1900) note = 'Punishes loose play quickly and defends accurately. Expect to work for it.';
+  else note = 'Thinks for several seconds a move at its full ceiling. Expect to lose.';
+  /* Honest about which half of this is measured. The gaps come from levels
+     playing hundreds of games against each other; the numbers themselves have
+     no outside reference to be anchored against. */
+  $('level-note').textContent = note +
+    ' The gaps between levels are measured from self-play; the numbers themselves are estimates.';
 }
 
 function newGame(opts) {
