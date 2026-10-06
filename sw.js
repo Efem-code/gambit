@@ -3,8 +3,9 @@
 /* BUILD is rewritten by phone.sh on every deploy. It has to change or the
    browser sees an identical service worker, keeps the old one, and the update
    never reaches the phone. */
-const BUILD = '20260925-124112';
-const CACHE = 'gambit-' + BUILD;
+const BUILD = '20261005-205627';
+const PREFIX = 'gambit-';
+const CACHE = PREFIX + BUILD;
 const SHELL = [
   './', './index.html', './styles.css',
   './chess.js', './engine.js', './book.js', './review.js',
@@ -14,12 +15,23 @@ const SHELL = [
 ];
 
 self.addEventListener('install', e => {
-  e.waitUntil(caches.open(CACHE).then(c => c.addAll(SHELL)).then(() => self.skipWaiting()));
+  /* cache: 'reload' skips the browser's HTTP cache (GitHub Pages sends
+     max-age=600). Every file must come back 200: an error page from a
+     half-published deploy would be cached for good, so a bad response fails
+     the install and the browser retries next launch. */
+  e.waitUntil(caches.open(CACHE)
+    .then(c => Promise.all(SHELL.map(u => fetch(u, { cache: 'reload' }).then(r => {
+      if (!r.ok) throw new Error(u + ' -> ' + r.status);
+      return c.put(u, r);
+    }))))
+    .then(() => self.skipWaiting()));
 });
 
 self.addEventListener('activate', e => {
+  /* Every app lives on the same origin (efem-code.github.io), so they share
+     one CacheStorage. Only clear this app's old builds, never another app's. */
   e.waitUntil(caches.keys()
-    .then(keys => Promise.all(keys.filter(k => k !== CACHE).map(k => caches.delete(k))))
+    .then(keys => Promise.all(keys.filter(k => k.startsWith(PREFIX) && k !== CACHE).map(k => caches.delete(k))))
     .then(() => self.clients.claim()));
 });
 
@@ -35,14 +47,14 @@ self.addEventListener('fetch', e => {
      genuinely confusing failure — the phone keeps running old code after an
      update that looked like it worked. */
   e.respondWith(
-    caches.match(req).then(hit => {
+    caches.match(req, { cacheName: CACHE }).then(hit => {
       const fresh = fetch(req).then(res => {
         if (res && res.status === 200 && res.type === 'basic') {
           const copy = res.clone();
           caches.open(CACHE).then(c => c.put(req, copy)).catch(() => {});
         }
         return res;
-      }).catch(() => hit || caches.match('./index.html'));
+      }).catch(() => hit || caches.match('./index.html', { cacheName: CACHE }));
       return hit || fresh;
     })
   );
